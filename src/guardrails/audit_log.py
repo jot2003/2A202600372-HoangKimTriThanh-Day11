@@ -52,9 +52,14 @@ class AuditLogPlugin(base_plugin.BasePlugin):
     ) -> types.Content | None:
         """Record incoming user message — never blocks."""
         text = self._extract_text(user_message)
-        session_id = (
-            invocation_context.session_id if invocation_context else "unknown"
-        )
+        try:
+            session_id = (
+                invocation_context.session.id
+                if invocation_context and invocation_context.session
+                else "unknown"
+            )
+        except Exception:
+            session_id = "unknown"
         self._pending[session_id] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_input": text,
@@ -68,9 +73,13 @@ class AuditLogPlugin(base_plugin.BasePlugin):
 
         # Try to find the matching pending entry
         session_id = "unknown"
-        if hasattr(callback_context, "invocation_context"):
-            ctx = callback_context.invocation_context
-            session_id = ctx.session_id if ctx else "unknown"
+        try:
+            if hasattr(callback_context, "invocation_context"):
+                ctx = callback_context.invocation_context
+                if ctx and hasattr(ctx, "session") and ctx.session:
+                    session_id = ctx.session.id
+        except Exception:
+            pass
 
         entry = self._pending.pop(session_id, {
             "timestamp": datetime.now(timezone.utc).isoformat(),
