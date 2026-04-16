@@ -132,11 +132,11 @@ async def part5_production():
     audit_plugin   = AuditLogPlugin(alert_block_rate=0.5)
 
     agent, runner = create_protected_agent(plugins=[
+        audit_plugin,   # Layer 5: audit log (MUST be first — always logs, even when later plugins block)
         rate_plugin,    # Layer 1: rate limit (prevents abuse)
         input_plugin,   # Layer 2: injection + topic filter
         output_plugin,  # Layer 3: PII/secrets redaction
         judge_plugin,   # Layer 4: multi-criteria LLM judge
-        audit_plugin,   # Layer 5: audit log + monitoring
     ])
 
     print("\nProduction pipeline created — 5 safety layers active.\n")

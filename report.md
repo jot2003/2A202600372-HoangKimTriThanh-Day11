@@ -130,6 +130,20 @@ A customer asks: "What is the maximum amount I can transfer without verification
 
 ---
 
+## Bonus: Session Anomaly Detector (+10 pts)
+
+As a 6th safety layer, I implemented a **Session Anomaly Detector** (`SessionAnomalyPlugin` in `notebooks/assignment11_defense_pipeline.ipynb`, cell 32).
+
+**What it does:** Tracks how many injection-like messages each user session has sent. When a session exceeds the threshold (default: 3 suspicious messages), the entire session is flagged and all subsequent messages are blocked immediately.
+
+**Why it's needed:** Each individual guardrail evaluates messages in isolation. A sophisticated attacker can spread their attack across multiple turns — each individual message looks innocent, but the sequence reveals malicious intent. This layer catches **multi-turn escalation attacks** that no per-message guardrail can detect.
+
+**Implementation:** Uses `detect_injection()` from `input_guardrails.py` to score each message. Maintains a `session_counts` dictionary and a `flagged_sessions` set. When `session_counts[session_id] >= threshold`, the session is permanently flagged and a human-readable block message is returned.
+
+**Trade-off:** This may occasionally flag legitimate users who accidentally trigger injection patterns multiple times (e.g., copy-pasting error messages). The threshold of 3 balances security with usability — it's unlikely a real customer would trigger injection detection 3 times in one session.
+
+---
+
 ## Appendix: Architecture Summary
 
 ```
