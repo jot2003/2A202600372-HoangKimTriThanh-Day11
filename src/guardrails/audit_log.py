@@ -51,42 +51,48 @@ class AuditLogPlugin(base_plugin.BasePlugin):
     async def on_user_message_callback(
         self, *, invocation_context, user_message
     ) -> types.Content | None:
-        """Record incoming user message — never blocks."""
+        """Record incoming user message and create log entry immediately.
+
+        Log entry is added to self.logs right away so it's always captured,
+        even if after_model_callback is never called (e.g. when a plugin blocks).
+        """
         text = self._extract_text(user_message)
-        self._pending.append({
+        entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_input": text,
-            "start_time": time.time(),
-        })
+            "response": "(blocked before LLM)",
+            "blocked": True,   # will be updated to False if LLM responds
+            "latency_ms": 0,
+            "_start_time": time.time(),
+        }
+        self._pending.append(entry)
+        self.logs.append(entry)   # always captured
         return None  # never block
 
     async def after_model_callback(self, *, callback_context, llm_response):
-        """Record model response, compute latency, check for block signals."""
-        response_text = self._extract_text(llm_response)
-
-        # Pop the oldest pending entry (FIFO — matches on_user_message_callback order)
-        entry = self._pending.popleft() if self._pending else {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "user_input": "(unknown)",
-            "start_time": time.time(),
-        }
+        """Update log entry with actual LLM response and latency."""
+        response_text = self._extract_text(
+            llm_response.content if hasattr(llm_response, "content") else llm_response
+        )
 
         BLOCK_INDICATORS = ["⚠️", "request blocked", "cannot provide", "i'm sorry"]
         blocked = any(ind in response_text.lower() for ind in BLOCK_INDICATORS)
 
-        entry.update({
-            "response": response_text[:500],
-            "blocked": blocked,
-            "latency_ms": round((time.time() - entry["start_time"]) * 1000, 1),
-        })
-        entry.pop("start_time", None)
-        self.logs.append(entry)
+        # Update the most recent pending entry in-place (it's already in self.logs)
+        if self._pending:
+            entry = self._pending.popleft()
+            start = entry.pop("_start_time", time.time())
+            entry.update({
+                "response": response_text[:500],
+                "blocked": blocked,
+                "latency_ms": round((time.time() - start) * 1000, 1),
+            })
 
         # --- Monitoring: check block rate ---
         block_rate = self._current_block_rate()
         if block_rate > self.alert_block_rate and len(self.logs) >= 5:
             alert_msg = (
-                f"🚨 ALERT: Block rate {block_rate:.0%} exceeds "
+                f"ALERT: Block rate {block_rate:.0%} exceeds "
                 f"threshold {self.alert_block_rate:.0%} "
                 f"(after {len(self.logs)} requests)"
             )
@@ -98,15 +104,18 @@ class AuditLogPlugin(base_plugin.BasePlugin):
 
     # ---- Export ----
     def export_json(self, filepath: str = "audit_log.json"):
-        """Write collected logs to a JSON file."""
+        """Write collected logs to a JSON file (finalized entries only)."""
+        final_logs = [e for e in self.logs if "_start_time" not in e]
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.logs, f, indent=2, ensure_ascii=False, default=str)
-        print(f"Audit log exported: {filepath} ({len(self.logs)} entries)")
+            json.dump(final_logs, f, indent=2, ensure_ascii=False, default=str)
+        print(f"Audit log exported: {filepath} ({len(final_logs)} entries)")
 
     def print_summary(self):
         """Print a summary suitable for demo / report."""
-        total = len(self.logs)
-        blocked = sum(1 for e in self.logs if e.get("blocked"))
+        # Only count finalized entries (no internal _start_time key)
+        final_logs = [e for e in self.logs if "_start_time" not in e]
+        total = len(final_logs)
+        blocked = sum(1 for e in final_logs if e.get("blocked"))
         avg_latency = (
             sum(e.get("latency_ms", 0) for e in self.logs) / total
             if total else 0
