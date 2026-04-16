@@ -45,9 +45,14 @@ class RateLimitPlugin(base_plugin.BasePlugin):
         invocation_context: InvocationContext,
         user_message: types.Content,
     ) -> types.Content | None:
-        user_id = (
-            invocation_context.user_id if invocation_context else "anonymous"
-        )
+        try:
+            user_id = (
+                invocation_context.user_id
+                if invocation_context and hasattr(invocation_context, "user_id")
+                else "anonymous"
+            )
+        except Exception:
+            user_id = "anonymous"
         now = time.time()
         window = self.user_windows[user_id]
 
