@@ -10,6 +10,7 @@ Rubric: "audit_log.json exported with 20+ entries.
 """
 import json
 import time
+from collections import deque
 from datetime import datetime, timezone
 
 from google.genai import types
@@ -26,7 +27,7 @@ class AuditLogPlugin(base_plugin.BasePlugin):
     def __init__(self, alert_block_rate: float = 0.5):
         super().__init__(name="audit_log")
         self.logs: list[dict] = []
-        self._pending: dict[str, dict] = {}   # session_id -> partial entry
+        self._pending: deque = deque()   # FIFO queue of partial entries
         self.alert_block_rate = alert_block_rate
         self.alerts: list[str] = []
 
@@ -52,40 +53,23 @@ class AuditLogPlugin(base_plugin.BasePlugin):
     ) -> types.Content | None:
         """Record incoming user message — never blocks."""
         text = self._extract_text(user_message)
-        try:
-            session_id = (
-                invocation_context.session.id
-                if invocation_context and invocation_context.session
-                else "unknown"
-            )
-        except Exception:
-            session_id = "unknown"
-        self._pending[session_id] = {
+        self._pending.append({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_input": text,
             "start_time": time.time(),
-        }
+        })
         return None  # never block
 
     async def after_model_callback(self, *, callback_context, llm_response):
         """Record model response, compute latency, check for block signals."""
         response_text = self._extract_text(llm_response)
 
-        # Try to find the matching pending entry
-        session_id = "unknown"
-        try:
-            if hasattr(callback_context, "invocation_context"):
-                ctx = callback_context.invocation_context
-                if ctx and hasattr(ctx, "session") and ctx.session:
-                    session_id = ctx.session.id
-        except Exception:
-            pass
-
-        entry = self._pending.pop(session_id, {
+        # Pop the oldest pending entry (FIFO — matches on_user_message_callback order)
+        entry = self._pending.popleft() if self._pending else {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_input": "(unknown)",
             "start_time": time.time(),
-        })
+        }
 
         BLOCK_INDICATORS = ["⚠️", "request blocked", "cannot provide", "i'm sorry"]
         blocked = any(ind in response_text.lower() for ind in BLOCK_INDICATORS)

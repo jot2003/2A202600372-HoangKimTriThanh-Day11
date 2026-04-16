@@ -48,6 +48,19 @@ def detect_injection(user_input: str) -> bool:
         r"forget your instructions",
         r"override your",
         r"output your (instructions|config|prompt)",
+        # Fill-in-the-blank attacks
+        r"fill in.*___",
+        r"complete.*blank",
+        r"___.*password",
+        r"___.*api.?key",
+        r"___.*connection",
+        # Credential/config extraction
+        r"(database|db)\s+(connection|string|host|password)",
+        r"what.*(password|api.?key|secret|credential)",
+        r"(show|give|tell).*(password|api.?key|credential|secret)",
+        # Bỏ qua (Vietnamese injection)
+        r"b[oỏ]\s+qua",
+        r"b[oỏ] qua m[oọ]i",
     ]
 
     for pattern in INJECTION_PATTERNS:
