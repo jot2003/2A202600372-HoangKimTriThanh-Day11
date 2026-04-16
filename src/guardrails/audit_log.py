@@ -10,7 +10,6 @@ Rubric: "audit_log.json exported with 20+ entries.
 """
 import json
 import time
-from collections import deque
 from datetime import datetime, timezone
 
 from google.genai import types
@@ -20,16 +19,19 @@ from google.adk.plugins import base_plugin
 class AuditLogPlugin(base_plugin.BasePlugin):
     """Records every input/output pair with metadata.
 
-    Also exposes lightweight monitoring: block-rate tracking and
-    threshold-based alerting printed to stdout (suitable for demo).
+    IMPORTANT: This plugin must be FIRST in the plugins list so that
+    on_user_message_callback always runs (even when later plugins block).
+    It returns None (never blocks), so it doesn't interfere with other
+    plugins.  after_model_callback updates the entry if the LLM responds.
     """
 
     def __init__(self, alert_block_rate: float = 0.5):
         super().__init__(name="audit_log")
         self.logs: list[dict] = []
-        self._pending: deque = deque()   # FIFO queue of partial entries
         self.alert_block_rate = alert_block_rate
         self.alerts: list[str] = []
+        # Simple ref to last entry created by on_user_message_callback
+        self._last_entry: dict | None = None
 
     # ---- helpers ----
     @staticmethod
@@ -51,26 +53,27 @@ class AuditLogPlugin(base_plugin.BasePlugin):
     async def on_user_message_callback(
         self, *, invocation_context, user_message
     ) -> types.Content | None:
-        """Record incoming user message and create log entry immediately.
+        """Record incoming user message and immediately append to log.
 
-        Log entry is added to self.logs right away so it's always captured,
-        even if after_model_callback is never called (e.g. when a plugin blocks).
+        The entry defaults to blocked=True / response="(blocked before LLM)".
+        If the LLM actually responds, after_model_callback updates the entry
+        in-place with the real response and latency.
         """
         text = self._extract_text(user_message)
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_input": text,
             "response": "(blocked before LLM)",
-            "blocked": True,   # will be updated to False if LLM responds
+            "blocked": True,
             "latency_ms": 0,
-            "_start_time": time.time(),
+            "_start": time.time(),
         }
-        self._pending.append(entry)
-        self.logs.append(entry)   # always captured
-        return None  # never block
+        self.logs.append(entry)
+        self._last_entry = entry          # simple ref for after_model_callback
+        return None                       # never block — always pass through
 
     async def after_model_callback(self, *, callback_context, llm_response):
-        """Update log entry with actual LLM response and latency."""
+        """Update the most recent log entry with actual LLM response."""
         response_text = self._extract_text(
             llm_response.content if hasattr(llm_response, "content") else llm_response
         )
@@ -78,21 +81,18 @@ class AuditLogPlugin(base_plugin.BasePlugin):
         BLOCK_INDICATORS = ["⚠️", "request blocked", "cannot provide", "i'm sorry"]
         blocked = any(ind in response_text.lower() for ind in BLOCK_INDICATORS)
 
-        # Update the most recent pending entry in-place (it's already in self.logs)
-        if self._pending:
-            entry = self._pending.popleft()
-            start = entry.pop("_start_time", time.time())
-            entry.update({
-                "response": response_text[:500],
-                "blocked": blocked,
-                "latency_ms": round((time.time() - start) * 1000, 1),
-            })
+        # Update the entry that was created in on_user_message_callback
+        entry = self._last_entry
+        if entry is not None and "_start" in entry:
+            entry["response"] = response_text[:500]
+            entry["blocked"] = blocked
+            entry["latency_ms"] = round((time.time() - entry.pop("_start")) * 1000, 1)
 
-        # --- Monitoring: check block rate ---
+        # --- Monitoring: check block rate and fire alert if needed ---
         block_rate = self._current_block_rate()
         if block_rate > self.alert_block_rate and len(self.logs) >= 5:
             alert_msg = (
-                f"ALERT: Block rate {block_rate:.0%} exceeds "
+                f"🚨 ALERT: Block rate {block_rate:.0%} exceeds "
                 f"threshold {self.alert_block_rate:.0%} "
                 f"(after {len(self.logs)} requests)"
             )
@@ -100,22 +100,21 @@ class AuditLogPlugin(base_plugin.BasePlugin):
                 self.alerts.append(alert_msg)
                 print(alert_msg)
 
-        return llm_response  # never modify
+        return llm_response               # never modify
 
-    # ---- Export ----
+    # ---- Export & reporting ----
     def export_json(self, filepath: str = "audit_log.json"):
-        """Write collected logs to a JSON file (finalized entries only)."""
-        final_logs = [e for e in self.logs if "_start_time" not in e]
+        """Write collected logs to a JSON file."""
+        clean = [{k: v for k, v in e.items() if not k.startswith("_")}
+                 for e in self.logs]
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(final_logs, f, indent=2, ensure_ascii=False, default=str)
-        print(f"Audit log exported: {filepath} ({len(final_logs)} entries)")
+            json.dump(clean, f, indent=2, ensure_ascii=False, default=str)
+        print(f"Audit log exported: {filepath} ({len(clean)} entries)")
 
     def print_summary(self):
         """Print a summary suitable for demo / report."""
-        # Only count finalized entries (no internal _start_time key)
-        final_logs = [e for e in self.logs if "_start_time" not in e]
-        total = len(final_logs)
-        blocked = sum(1 for e in final_logs if e.get("blocked"))
+        total = len(self.logs)
+        blocked = sum(1 for e in self.logs if e.get("blocked"))
         avg_latency = (
             sum(e.get("latency_ms", 0) for e in self.logs) / total
             if total else 0
@@ -124,7 +123,10 @@ class AuditLogPlugin(base_plugin.BasePlugin):
         print("AUDIT & MONITORING SUMMARY")
         print(f"{'='*50}")
         print(f"  Total interactions:  {total}")
-        print(f"  Blocked:             {blocked}  ({blocked/total:.0%})" if total else "  Blocked:  0")
+        if total:
+            print(f"  Blocked:             {blocked}  ({blocked/total:.0%})")
+        else:
+            print(f"  Blocked:             0")
         print(f"  Avg latency:         {avg_latency:.0f} ms")
         print(f"  Alerts fired:        {len(self.alerts)}")
         for a in self.alerts:
