@@ -116,6 +116,10 @@ class LlmJudgePlugin(base_plugin.BasePlugin):
         self.blocked_count = 0
         self.total_count = 0
 
+    async def on_user_message_callback(self, *, invocation_context, user_message):
+        """No-op — required so ADK registers this plugin for after_model_callback."""
+        return None
+
     async def after_model_callback(self, *, callback_context, llm_response):
         self.total_count += 1
 

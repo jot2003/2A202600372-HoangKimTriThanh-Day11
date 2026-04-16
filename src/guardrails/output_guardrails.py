@@ -164,6 +164,10 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
                     text += part.text
         return text
 
+    async def on_user_message_callback(self, *, invocation_context, user_message):
+        """No-op — required so ADK registers this plugin for after_model_callback."""
+        return None
+
     async def after_model_callback(
         self,
         *,
