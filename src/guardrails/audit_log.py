@@ -100,7 +100,7 @@ class AuditLogPlugin(base_plugin.BasePlugin):
                 self.alerts.append(alert_msg)
                 print(alert_msg)
 
-        return llm_response               # never modify
+        return None                        # never modify — return None to avoid short-circuiting remaining plugins
 
     # ---- Export & reporting ----
     def export_json(self, filepath: str = "audit_log.json"):

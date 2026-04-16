@@ -130,7 +130,7 @@ class LlmJudgePlugin(base_plugin.BasePlugin):
                 if hasattr(part, "text") and part.text:
                     text += part.text
         if not text:
-            return llm_response
+            return None
 
         try:
             scores = await judge_response(text)
@@ -154,7 +154,7 @@ class LlmJudgePlugin(base_plugin.BasePlugin):
                 )],
             )
 
-        return llm_response
+        return None  # mutated in-place; return None so later plugins still run
 
     def print_results(self):
         """Pretty-print all judge evaluations (for demo/report)."""

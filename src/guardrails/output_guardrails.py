@@ -179,7 +179,7 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
 
         response_text = self._extract_text(llm_response)
         if not response_text:
-            return llm_response
+            return None  # no text → pass through without short-circuiting
 
         # 1. Run content filter to detect and redact PII/secrets
         filter_result = content_filter(response_text)
@@ -204,8 +204,8 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
                 )
                 self.blocked_count += 1
 
-        # 3. Return the (possibly modified) response
-        return llm_response
+        # 3. Mutated in-place; return None so later plugins (judge) still run
+        return None
 
 
 # ============================================================
