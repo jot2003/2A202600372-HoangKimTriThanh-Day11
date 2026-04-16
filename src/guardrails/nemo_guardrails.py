@@ -19,7 +19,7 @@ except ImportError:
 NEMO_YAML_CONFIG = textwrap.dedent("""\
     models:
       - type: main
-        engine: google
+        engine: google_genai
         model: gemini-2.5-flash-lite
 
     rails:
