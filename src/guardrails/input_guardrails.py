@@ -57,7 +57,7 @@ def detect_injection(user_input: str) -> bool:
         # Credential/config extraction
         r"(database|db)\s+(connection|string|host|password)",
         r"what.*(password|api.?key|secret|credential)",
-        r"(show|give|tell).*(password|api.?key|credential|secret)",
+        r"(show|give|tell|provide|share).*(password|api.?key|credential|secret)",
         # Bỏ qua (Vietnamese injection)
         r"b[oỏ]\s+qua",
         r"b[oỏ] qua m[oọ]i",
