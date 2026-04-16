@@ -113,23 +113,12 @@ attack_queries = [
 ]
 ```
 
-`Blocked` should mean the pipeline refused or safely neutralized the attack.
-Do not classify attacks only by apology keywords. Mark a case as `LEAKED` only if
-the response actually contains sensitive values such as passwords, API keys,
-internal hosts, or other secrets.
-
 ### Test 3: Rate limiting
 
 ```python
 # Send 15 rapid requests from the same user
 # Expected: First 10 pass, last 5 blocked
 ```
-
-Implementation note:
-- Prefer checking the plugin's internal counters (`allowed_count`, `blocked_count`)
-  in addition to response text.
-- Transient upstream model failures (for example `503 UNAVAILABLE`) should be
-  handled separately from rate-limit blocks and should not crash the notebook.
 
 ### Test 4: Edge cases
 
@@ -165,17 +154,6 @@ Submit a working `.ipynb` notebook (or `.py` files) with:
 **Code comments are required.** For each function/class, explain:
 - What does this component do?
 - Why is it needed? (What attack does it catch that other layers don't?)
-
-### Notebook Execution Notes
-
-- Your notebook should be runnable from top to bottom on Colab.
-- If you connect the notebook to code in `src/`, import the final implementations
-  before running demo tests. Avoid defining placeholder TODO functions and then
-  testing them before re-importing the real versions.
-- If you update repo code during a session, either restart the runtime and run all,
-  or explicitly `git pull` and reload the affected modules before re-running cells.
-- For final submission, prefer a clean `Restart session` + `Run all` so outputs are
-  consistent and easy to grade.
 
 ### Part B: Individual Report (40 points)
 
@@ -228,28 +206,15 @@ class RateLimitPlugin(base_plugin.BasePlugin):
         self.user_windows = defaultdict(deque)
 
     async def on_user_message_callback(self, *, invocation_context, user_message):
-        user_id = (
-            invocation_context.user_id
-            if invocation_context and hasattr(invocation_context, "user_id")
-            else "anonymous"
-        )
+        user_id = invocation_context.user_id if invocation_context else "anonymous"
         now = time.time()
         window = self.user_windows[user_id]
 
-        while window and window[0] <= now - self.window_seconds:
-            window.popleft()
-
-        if len(window) >= self.max_requests:
-            wait = self.window_seconds - (now - window[0])
-            return types.Content(
-                role="model",
-                parts=[types.Part.from_text(
-                    text=f"Rate limit exceeded. Please wait {wait:.0f}s."
-                )],
-            )
-
-        window.append(now)
-        return None
+        # Remove expired timestamps from the front of the deque
+        # Check if len(window) >= self.max_requests
+        #   If yes: calculate wait time, return block Content
+        #   If no: add current timestamp, return None (allow)
+        pass
 ```
 </details>
 
@@ -284,38 +249,25 @@ REASON: <one sentence>
 
 ```python
 import json
-import time
-from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from google.adk.plugins import base_plugin
 
 class AuditLogPlugin(base_plugin.BasePlugin):
     def __init__(self):
         super().__init__(name="audit_log")
         self.logs = []
-        self._pending = deque()
 
     async def on_user_message_callback(self, *, invocation_context, user_message):
-        # Record input immediately so blocked requests are still captured.
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "user_input": "...",
-            "response": "(blocked before LLM)",
-            "blocked": True,
-            "_start_time": time.time(),
-        }
-        self._pending.append(entry)
-        self.logs.append(entry)
+        # Record input + start time. Never block.
         return None
 
     async def after_model_callback(self, *, callback_context, llm_response):
-        # Update the oldest pending entry in-place with final response/latency.
+        # Record output + calculate latency. Never modify.
         return llm_response
 
     def export_json(self, filepath="audit_log.json"):
-        final_logs = [e for e in self.logs if "_start_time" not in e]
         with open(filepath, "w") as f:
-            json.dump(final_logs, f, indent=2, default=str)
+            json.dump(self.logs, f, indent=2, default=str)
 ```
 </details>
 
